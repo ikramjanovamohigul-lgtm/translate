@@ -1,10 +1,12 @@
 import { SupportedLanguage } from '../types.ts';
 
-// Text-to-Speech (SpeechSynthesis)
+// Text-to-Speech (SpeechSynthesis / Tinglash)
 class TextToSpeechService {
   private synth: SpeechSynthesis | null = null;
   private voices: SpeechSynthesisVoice[] = [];
   private isVoicesLoaded = false;
+  // Retain utterance reference to prevent Chrome garbage-collection cancellation bug
+  private currentUtterance: SpeechSynthesisUtterance | null = null;
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -18,9 +20,13 @@ class TextToSpeechService {
 
   private loadVoices() {
     if (!this.synth) return;
-    this.voices = this.synth.getVoices();
-    if (this.voices.length > 0) {
-      this.isVoicesLoaded = true;
+    try {
+      this.voices = this.synth.getVoices() || [];
+      if (this.voices.length > 0) {
+        this.isVoicesLoaded = true;
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -28,7 +34,7 @@ class TextToSpeechService {
     return typeof window !== 'undefined' && 'speechSynthesis' in window;
   }
 
-  public getBestVoiceForLanguage(lang: SupportedLanguage): SpeechSynthesisVoice | null {
+  public getBestVoiceForLanguage(lang: SupportedLanguage): { voice: SpeechSynthesisVoice | null; langCode: string } {
     if (!this.isVoicesLoaded) {
       this.loadVoices();
     }
@@ -38,24 +44,38 @@ class TextToSpeechService {
         this.voices.find((v) => v.lang === 'en-US') ||
         this.voices.find((v) => v.lang === 'en-GB') ||
         this.voices.find((v) => v.lang.toLowerCase().startsWith('en'));
-      return enVoice || null;
+      return { voice: enVoice || null, langCode: enVoice?.lang || 'en-US' };
     }
 
     if (lang === 'Russian') {
       const ruVoice =
         this.voices.find((v) => v.lang === 'ru-RU') ||
         this.voices.find((v) => v.lang.toLowerCase().startsWith('ru'));
-      return ruVoice || null;
+      return { voice: ruVoice || null, langCode: ruVoice?.lang || 'ru-RU' };
     }
 
     if (lang === 'Uzbek') {
+      // 1. Check for dedicated Uzbek voice
       const uzVoice =
-        this.voices.find((v) => v.lang === 'uz-UZ') ||
-        this.voices.find((v) => v.lang.toLowerCase().startsWith('uz'));
-      return uzVoice || null;
+        this.voices.find((v) => v.lang.toLowerCase().startsWith('uz')) ||
+        this.voices.find((v) => v.name.toLowerCase().includes('uzbek'));
+      if (uzVoice) {
+        return { voice: uzVoice, langCode: uzVoice.lang };
+      }
+
+      // 2. Turkish (tr-TR) shares closely related Turkic Latin phonetics (a, o, u, i, e, sh, ch)
+      const trVoice = this.voices.find((v) => v.lang.toLowerCase().startsWith('tr'));
+      if (trVoice) {
+        return { voice: trVoice, langCode: trVoice.lang };
+      }
+
+      // 3. Fallback to system default voice so audio never fails to play
+      const defaultVoice = this.voices.find((v) => v.default) || this.voices[0] || null;
+      return { voice: defaultVoice, langCode: defaultVoice?.lang || 'en-US' };
     }
 
-    return null;
+    const defaultVoice = this.voices.find((v) => v.default) || this.voices[0] || null;
+    return { voice: defaultVoice, langCode: defaultVoice?.lang || 'en-US' };
   }
 
   public speak(
@@ -63,63 +83,67 @@ class TextToSpeechService {
     lang: SupportedLanguage,
     onStart: () => void,
     onEnd: () => void,
-    onError: (errMsg: string) => void,
-    onFallbackWarning?: (warning: string) => void
+    onError: (errMsg: string) => void
   ) {
     if (!this.synth) {
       onError('Text-to-speech is not supported in this browser.');
       return;
     }
 
-    // Cancel any previous utterances
-    this.synth.cancel();
-
-    if (!text.trim()) {
+    const trimmed = text.trim();
+    if (!trimmed) {
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.getBestVoiceForLanguage(lang);
-
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = voice.lang;
-    } else {
-      if (lang === 'English') utterance.lang = 'en-US';
-      else if (lang === 'Russian') utterance.lang = 'ru-RU';
-      else if (lang === 'Uzbek') {
-        utterance.lang = 'uz-UZ';
-        if (onFallbackWarning) {
-          onFallbackWarning(
-            'Notice: Your browser/device does not have a native Uzbek voice installed. System default voice will be used.'
-          );
-        }
-      }
-    }
-
-    utterance.rate = 0.95; // Slightly clearer rate for comprehension
-    utterance.pitch = 1.0;
-
-    utterance.onstart = () => {
-      onStart();
-    };
-
-    utterance.onend = () => {
-      onEnd();
-    };
-
-    utterance.onerror = (e) => {
-      // If manually canceled by user, don't trigger error
-      if (e.error === 'canceled' || e.error === 'interrupted') {
-        onEnd();
-        return;
-      }
-      onError(`Speech playback error (${e.error || 'unknown'}).`);
-      onEnd();
-    };
-
     try {
+      // Chrome audio context unpause fix
+      if (this.synth.paused) {
+        this.synth.resume();
+      }
+      this.synth.cancel();
+
+      const { voice, langCode } = this.getBestVoiceForLanguage(lang);
+      const utterance = new SpeechSynthesisUtterance(trimmed);
+      this.currentUtterance = utterance;
+
+      if (voice) {
+        utterance.voice = voice;
+      }
+      utterance.lang = langCode;
+      utterance.rate = 0.92;
+      utterance.pitch = 1.0;
+
+      utterance.onstart = () => {
+        onStart();
+      };
+
+      utterance.onend = () => {
+        this.currentUtterance = null;
+        onEnd();
+      };
+
+      utterance.onerror = (e: any) => {
+        this.currentUtterance = null;
+        if (e.error === 'canceled' || e.error === 'interrupted') {
+          onEnd();
+          return;
+        }
+        onError('Audio playback could not be started.');
+        onEnd();
+      };
+
       this.synth.speak(utterance);
+
+      // Chrome timeout watchdog: Chrome sometimes pauses utterances after 10-15s
+      const timer = setInterval(() => {
+        if (!this.synth || !this.currentUtterance) {
+          clearInterval(timer);
+          return;
+        }
+        if (this.synth.speaking && this.synth.paused) {
+          this.synth.resume();
+        }
+      }, 5000);
     } catch (err: any) {
       onError(err?.message || 'Failed to start speech.');
       onEnd();
@@ -128,14 +152,19 @@ class TextToSpeechService {
 
   public stop() {
     if (this.synth) {
-      this.synth.cancel();
+      try {
+        this.synth.cancel();
+      } catch {
+        // ignore
+      }
     }
+    this.currentUtterance = null;
   }
 }
 
 export const ttsService = new TextToSpeechService();
 
-// Speech-to-Text (SpeechRecognition)
+// Speech-to-Text (Microphone / Ovoz kiritish)
 export interface SpeechRecognitionHandlers {
   onResult: (transcript: string) => void;
   onStart: () => void;
@@ -146,102 +175,130 @@ export interface SpeechRecognitionHandlers {
 export class SpeechToTextService {
   private recognition: any = null;
   private isListening = false;
-
-  constructor() {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        this.recognition = new SpeechRecognition();
-        this.recognition.continuous = false;
-        this.recognition.interimResults = true;
-      }
-    }
-  }
+  private isManuallyStopped = false;
 
   public isSupported(): boolean {
+    if (typeof window === 'undefined') return false;
     return Boolean(
-      typeof window !== 'undefined' &&
-        ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition
     );
   }
 
   public startListening(lang: SupportedLanguage, handlers: SpeechRecognitionHandlers) {
-    if (!this.recognition) {
-      handlers.onError('Speech recognition is not supported in this browser. (Use Chrome or Edge for voice input)');
+    const SpeechRecognitionClass =
+      typeof window !== 'undefined'
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
+
+    if (!SpeechRecognitionClass) {
+      handlers.onError('Brauzeringiz ovozli kiritishni (microphone) qo‘llab-quvvatlamaydi. Iltimos Google Chrome yoki Microsoft Edge brauzeridan foydalaning.');
       return;
     }
 
+    // Stop any existing session
     if (this.isListening) {
       this.stopListening();
     }
 
-    // Assign language
-    if (lang === 'English') {
-      this.recognition.lang = 'en-US';
-    } else if (lang === 'Russian') {
-      this.recognition.lang = 'ru-RU';
-    } else if (lang === 'Uzbek') {
-      this.recognition.lang = 'uz-UZ';
-    }
-
-    let finalTranscript = '';
-
-    this.recognition.onstart = () => {
-      this.isListening = true;
-      handlers.onStart();
-    };
-
-    this.recognition.onresult = (event: any) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interim += transcript;
-        }
-      }
-      handlers.onResult(finalTranscript || interim);
-    };
-
-    this.recognition.onerror = (event: any) => {
-      let message = 'Microphone speech recognition error.';
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        message = 'Microphone permission was denied. Please allow microphone access in your browser.';
-      } else if (event.error === 'no-speech') {
-        message = 'No speech detected. Please speak clearly into your microphone.';
-      } else if (event.error === 'language-not-supported') {
-        message = `Voice recognition for ${lang} is not supported by your current browser.`;
-      }
-      handlers.onError(message);
-      this.isListening = false;
-      handlers.onEnd();
-    };
-
-    this.recognition.onend = () => {
-      this.isListening = false;
-      handlers.onEnd();
-    };
+    this.isManuallyStopped = false;
 
     try {
-      this.recognition.start();
+      const recognition = new SpeechRecognitionClass();
+      this.recognition = recognition;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      // Assign primary language code
+      if (lang === 'English') {
+        recognition.lang = 'en-US';
+      } else if (lang === 'Russian') {
+        recognition.lang = 'ru-RU';
+      } else if (lang === 'Uzbek') {
+        // Uzbek standard code is uz-UZ
+        recognition.lang = 'uz-UZ';
+      }
+
+      let accumulated = '';
+
+      recognition.onstart = () => {
+        this.isListening = true;
+        handlers.onStart();
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const item = event.results[i];
+          const text = item[0].transcript;
+          if (item.isFinal) {
+            accumulated += (accumulated ? ' ' : '') + text.trim();
+          } else {
+            interim += text;
+          }
+        }
+
+        const combined = (accumulated + (interim ? ' ' + interim : '')).trim();
+        if (combined) {
+          handlers.onResult(combined);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        if (this.isManuallyStopped) {
+          return;
+        }
+
+        const err = event?.error;
+        let message = 'Mikrofon orqali ovozni aniqlashda xatolik yuz berdi.';
+
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          message = 'Mikrofon ruxsati berilmadi. Iltimos, brauzer qatoridagi qulf belgisini bosib, mikrofon (Microphone)ga ruxsat bering.';
+        } else if (err === 'no-speech') {
+          message = 'Ovoz eshitilmadi. Iltimos, mikrofonga yaqinroq va aniqroq gapiring.';
+        } else if (err === 'audio-capture') {
+          message = 'Mikrofon topilmadi. Qurilmangizga mikrofon ulanganligini tekshiring.';
+        } else if (err === 'network') {
+          message = 'Tarmoq xatosi. Internet aloqasini tekshiring.';
+        } else if (err === 'language-not-supported') {
+          // If uz-UZ is not supported by Chrome server in this region, notify or fallback
+          message = `${lang} tili uchun ovozni aniqlash ushbu brauzerda mavjud emas. Rus yoki Ingliz tillarini sinab ko'rishingiz mumkin.`;
+        }
+
+        handlers.onError(message);
+        this.isListening = false;
+        handlers.onEnd();
+      };
+
+      recognition.onend = () => {
+        this.isListening = false;
+        handlers.onEnd();
+      };
+
+      recognition.start();
     } catch (err: any) {
-      handlers.onError(err?.message || 'Could not access microphone.');
+      handlers.onError(err?.message || 'Mikrofonni ishga tushirib bo‘lmadi.');
       this.isListening = false;
       handlers.onEnd();
     }
   }
 
   public stopListening() {
-    if (this.recognition && this.isListening) {
+    this.isManuallyStopped = true;
+    if (this.recognition) {
       try {
         this.recognition.stop();
       } catch {
-        // ignore
+        try {
+          this.recognition.abort();
+        } catch {
+          // ignore
+        }
       }
-      this.isListening = false;
+      this.recognition = null;
     }
+    this.isListening = false;
   }
 }
 

@@ -57,8 +57,12 @@ export default function App() {
   const [copied, setCopied] = useState<boolean>(false);
 
   // Audio & Speech states
-  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [speakingWhich, setSpeakingWhich] = useState<'source' | 'target' | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
+
+  const isSpeakingSource = speakingWhich === 'source';
+  const isSpeakingTarget = speakingWhich === 'target';
+  const isSpeaking = speakingWhich !== null;
 
   // History state
   const [history, setHistory] = useState<HistoryItem[]>(() => {
@@ -78,6 +82,7 @@ export default function App() {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isSwappingRef = useRef<boolean>(false);
   const latestTranslatedRef = useRef<string>('');
+  const initialSpeechPrefixRef = useRef<string>('');
 
   // Apply dark mode class to html element
   useEffect(() => {
@@ -265,7 +270,7 @@ export default function App() {
   const handleSwapLanguages = () => {
     // Stop any active speech before swapping
     ttsService.stop();
-    setIsSpeaking(false);
+    setSpeakingWhich(null);
 
     isSwappingRef.current = true;
     const oldSource = sourceLang;
@@ -292,7 +297,7 @@ export default function App() {
   const handleClear = () => {
     ttsService.stop();
     sttService.stopListening();
-    setIsSpeaking(false);
+    setSpeakingWhich(null);
     setIsListening(false);
     setInputText('');
     setTranslatedText('');
@@ -307,29 +312,50 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Text-To-Speech (Speaker 🔊) handler
-  const handleToggleSpeech = () => {
-    if (isSpeaking) {
+  // Text-To-Speech (Speaker 🔊) handler for Source Text
+  const handleToggleSpeechSource = () => {
+    if (speakingWhich === 'source') {
       ttsService.stop();
-      setIsSpeaking(false);
+      setSpeakingWhich(null);
+      return;
+    }
+
+    if (!inputText.trim()) return;
+
+    ttsService.stop();
+    ttsService.speak(
+      inputText,
+      sourceLang,
+      () => setSpeakingWhich('source'),
+      () => setSpeakingWhich(null),
+      (errMsg) => {
+        setSpeakingWhich(null);
+        setInfoMessage(errMsg);
+        setTimeout(() => setInfoMessage(null), 4000);
+      }
+    );
+  };
+
+  // Text-To-Speech (Speaker 🔊) handler for Translated Text
+  const handleToggleSpeechTarget = () => {
+    if (speakingWhich === 'target') {
+      ttsService.stop();
+      setSpeakingWhich(null);
       return;
     }
 
     if (!translatedText.trim()) return;
 
+    ttsService.stop();
     ttsService.speak(
       translatedText,
       targetLang,
-      () => setIsSpeaking(true),
-      () => setIsSpeaking(false),
+      () => setSpeakingWhich('target'),
+      () => setSpeakingWhich(null),
       (errMsg) => {
-        setIsSpeaking(false);
+        setSpeakingWhich(null);
         setInfoMessage(errMsg);
         setTimeout(() => setInfoMessage(null), 4000);
-      },
-      (fallbackNotice) => {
-        setInfoMessage(fallbackNotice);
-        setTimeout(() => setInfoMessage(null), 5000);
       }
     );
   };
@@ -344,11 +370,19 @@ export default function App() {
 
     if (!sttService.isSupported()) {
       setInfoMessage(
-        'Voice input is not supported by your current browser. Please try Google Chrome or Microsoft Edge.'
+        'Brauzeringiz ovozli kiritishni (microphone) qo‘llab-quvvatlamaydi. Iltimos Google Chrome yoki Microsoft Edge brauzeridan foydalaning.'
       );
-      setTimeout(() => setInfoMessage(null), 5000);
+      setTimeout(() => setInfoMessage(null), 6000);
       return;
     }
+
+    // Stop speaking if currently active
+    ttsService.stop();
+    setSpeakingWhich(null);
+
+    // Capture any existing text prefix so new speech appends naturally
+    const current = inputText.trim();
+    initialSpeechPrefixRef.current = current ? current + ' ' : '';
 
     sttService.startListening(sourceLang, {
       onStart: () => {
@@ -356,7 +390,8 @@ export default function App() {
         setInfoMessage(null);
       },
       onResult: (transcript) => {
-        setInputText(transcript);
+        const full = (initialSpeechPrefixRef.current + transcript).slice(0, MAX_CHARS);
+        setInputText(full);
       },
       onEnd: () => {
         setIsListening(false);
@@ -364,7 +399,7 @@ export default function App() {
       onError: (errMsg) => {
         setIsListening(false);
         setInfoMessage(errMsg);
-        setTimeout(() => setInfoMessage(null), 5000);
+        setTimeout(() => setInfoMessage(null), 6000);
       },
     });
   };
@@ -372,7 +407,7 @@ export default function App() {
   // Restore item from history
   const handleRestoreHistory = (item: HistoryItem) => {
     ttsService.stop();
-    setIsSpeaking(false);
+    setSpeakingWhich(null);
     setSourceLang(item.sourceLang);
     setTargetLang(item.targetLang);
     setInputText(item.sourceText);
@@ -405,7 +440,7 @@ export default function App() {
         <PresetChips
           onSelect={(preset) => {
             ttsService.stop();
-            setIsSpeaking(false);
+            setSpeakingWhich(null);
             setSourceLang(preset.sourceLang);
             setTargetLang(preset.targetLang);
             setInputText(preset.sourceText);
@@ -455,6 +490,9 @@ export default function App() {
                 {isListening && (
                   <AudioWaveIndicator color="bg-rose-500" label="Listening..." />
                 )}
+                {isSpeakingSource && (
+                  <AudioWaveIndicator color="bg-blue-500" label="Speaking..." />
+                )}
               </div>
 
               {/* Language Selector in the TOP-RIGHT corner of the box */}
@@ -489,6 +527,26 @@ export default function App() {
               />
             </div>
 
+            {/* Listening Live Status */}
+            {isListening && (
+              <div className="mb-2 py-1.5 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                  </span>
+                  <span>Listening in <strong>{sourceLang}</strong>... Speak into your microphone</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleVoiceInput}
+                  className="font-semibold text-rose-800 dark:text-rose-200 hover:underline cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+
             {/* Bottom Actions of Top Box: Microphone, Clear & Character Count */}
             <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
               <div className="flex items-center gap-2">
@@ -498,7 +556,7 @@ export default function App() {
                   onClick={handleToggleVoiceInput}
                   title={isListening ? 'Stop listening' : 'Start voice input (Speak)'}
                   aria-label={isListening ? 'Stop listening' : 'Start voice input'}
-                  className={`relative p-2.5 rounded-xl border transition-all ${
+                  className={`relative p-2.5 rounded-xl border transition-all cursor-pointer ${
                     isListening
                       ? 'bg-rose-500 text-white border-rose-600 shadow-md shadow-rose-500/30 ring-2 ring-rose-400 animate-pulse'
                       : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700'
@@ -509,6 +567,22 @@ export default function App() {
                   ) : (
                     <Mic className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                   )}
+                </button>
+
+                {/* Speaker Button 🔊 for Source Text */}
+                <button
+                  type="button"
+                  onClick={handleToggleSpeechSource}
+                  disabled={!inputText.trim()}
+                  title={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
+                  aria-label={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    isSpeakingSource
+                      ? 'bg-blue-600 text-white border-blue-700 shadow-md ring-2 ring-blue-400 animate-pulse'
+                      : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  <Volume2 className={`w-5 h-5 ${isSpeakingSource ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`} />
                 </button>
 
                 {/* Clear Button */}
@@ -572,8 +646,8 @@ export default function App() {
             <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800/80">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
                 <span>Translation Result</span>
-                {isSpeaking && (
-                  <AudioWaveIndicator color="bg-emerald-500" label="Speaking target language..." />
+                {isSpeakingTarget && (
+                  <AudioWaveIndicator color="bg-emerald-500" label="Speaking..." />
                 )}
               </div>
 
@@ -617,30 +691,30 @@ export default function App() {
                 {/* Speaker Button 🔊 */}
                 <button
                   type="button"
-                  onClick={handleToggleSpeech}
+                  onClick={handleToggleSpeechTarget}
                   disabled={!translatedText}
-                  title={isSpeaking ? 'Stop speaking' : `Read aloud in ${targetLang}`}
-                  aria-label={isSpeaking ? 'Stop speaking' : `Read aloud in ${targetLang}`}
-                  className={`p-2.5 rounded-xl border transition-all ${
-                    isSpeaking
+                  title={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
+                  aria-label={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    isSpeakingTarget
                       ? 'bg-emerald-600 text-white border-emerald-700 shadow-md ring-2 ring-emerald-400 animate-pulse'
                       : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
                   }`}
                 >
-                  <Volume2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  <Volume2 className={`w-5 h-5 ${isSpeakingTarget ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'}`} />
                 </button>
 
                 {/* Stop Speech Button ⏹ */}
-                {isSpeaking && (
+                {isSpeakingTarget && (
                   <button
                     type="button"
                     onClick={() => {
                       ttsService.stop();
-                      setIsSpeaking(false);
+                      setSpeakingWhich(null);
                     }}
                     title="Stop playback"
                     aria-label="Stop playback"
-                    className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 hover:bg-rose-100 transition-colors"
+                    className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 hover:bg-rose-100 transition-colors cursor-pointer"
                   >
                     <Square className="w-5 h-5 fill-current" />
                   </button>
