@@ -1,0 +1,6 @@
+{
+  "name": "AI Translator",
+  "description": "A modern, intelligent translator for English, Russian, and Uzbek powered by Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
