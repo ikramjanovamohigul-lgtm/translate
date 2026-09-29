@@ -46,7 +46,7 @@ export const PresetChips: React.FC<PresetChipsProps> = ({ onSelect }) => {
           key={preset.label}
           type="button"
           onClick={() => onSelect(preset)}
-          className="text-xs px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:border-blue-300 dark:hover:border-blue-700 text-zinc-700 dark:text-zinc-300 transition-all font-medium shadow-xs"
+          className="text-xs px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 hover:bg-blue-50 dark:hover:bg-blue-950/40 hover:border-blue-300 dark:hover:border-blue-700 text-zinc-700 dark:text-zinc-300 hover:scale-[1.02] active:scale-[0.98] transition-all font-medium shadow-xs cursor-pointer"
         >
           {preset.label}
         </button>

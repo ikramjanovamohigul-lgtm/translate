@@ -23,6 +23,8 @@ import { LanguageDropdown } from './components/LanguageDropdown.tsx';
 import { AudioWaveIndicator } from './components/AudioWaveIndicator.tsx';
 import { HistorySection } from './components/HistorySection.tsx';
 import { PresetChips } from './components/PresetChips.tsx';
+import { EntranceScreen } from './components/EntranceScreen.tsx';
+import { WordGame } from './components/WordGame.tsx';
 import { ttsService, sttService } from './lib/speech.ts';
 
 const MAX_CHARS = 5000;
@@ -59,6 +61,20 @@ export default function App() {
   // Audio & Speech states
   const [speakingWhich, setSpeakingWhich] = useState<'source' | 'target' | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
+
+  // App View & Entrance Screen states
+  const [showEntrance, setShowEntrance] = useState<boolean>(() => {
+    // Show entrance modal on first visit in session
+    if (typeof window !== 'undefined') {
+      try {
+        return sessionStorage.getItem('ilmhub_visited') !== 'true';
+      } catch {
+        return true;
+      }
+    }
+    return true;
+  });
+  const [activeTab, setActiveTab] = useState<'translator' | 'game'>('translator');
 
   const isSpeakingSource = speakingWhich === 'source';
   const isSpeakingTarget = speakingWhich === 'target';
@@ -432,337 +448,406 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors duration-200 py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-between">
-      <div className="max-w-4xl mx-auto w-full">
-        {/* Header */}
-        <Header darkMode={darkMode} onToggleTheme={() => setDarkMode(!darkMode)} />
-
-        {/* Quick Example Presets */}
-        <PresetChips
-          onSelect={(preset) => {
-            ttsService.stop();
-            setSpeakingWhich(null);
-            setSourceLang(preset.sourceLang);
-            setTargetLang(preset.targetLang);
-            setInputText(preset.sourceText);
-            executeTranslation(preset.sourceText, preset.sourceLang, preset.targetLang, false);
+      {/* Welcome / Entrance Splash Screen */}
+      {showEntrance && (
+        <EntranceScreen
+          onEnterApp={() => {
+            setShowEntrance(false);
+            try {
+              sessionStorage.setItem('ilmhub_visited', 'true');
+            } catch {
+              // ignore
+            }
+          }}
+          onEnterGame={() => {
+            setShowEntrance(false);
+            setActiveTab('game');
+            try {
+              sessionStorage.setItem('ilmhub_visited', 'true');
+            } catch {
+              // ignore
+            }
           }}
         />
+      )}
 
-        {/* Alerts & Notifications */}
-        {infoMessage && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm flex items-center justify-between shadow-xs animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-              <span>{infoMessage}</span>
-            </div>
-            <button
-              onClick={() => setInfoMessage(null)}
-              className="text-amber-600 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-100 p-1"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+      <div className="max-w-4xl mx-auto w-full">
+        {/* Header */}
+        <div className="animate-entrance-down">
+          <Header
+            darkMode={darkMode}
+            onToggleTheme={() => setDarkMode(!darkMode)}
+            activeTab={activeTab}
+            onSelectTab={(tab) => {
+              ttsService.stop();
+              setSpeakingWhich(null);
+              setActiveTab(tab);
+            }}
+            onOpenEntrance={() => setShowEntrance(true)}
+          />
+        </div>
 
-        {errorMessage && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-sm flex items-center justify-between shadow-xs animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
-              <span>{errorMessage}</span>
-            </div>
-            <button
-              onClick={() => setErrorMessage(null)}
-              className="text-rose-600 dark:text-rose-400 hover:text-rose-900 dark:hover:text-rose-100 p-1"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {/* MAIN INTERFACE: TWO LARGE RECTANGULAR TRANSLATION BOXES ARRANGED VERTICALLY */}
-        <div className="flex flex-col gap-3">
-          {/* ================= TOP BOX (INPUT) ================= */}
-          <div className="relative w-full rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all p-5 flex flex-col justify-between min-h-[220px]">
-            {/* Box Header: Top-right corner Language Selector */}
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800/80">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <span>Source Text</span>
-                {isListening && (
-                  <AudioWaveIndicator color="bg-rose-500" label="Listening..." />
-                )}
-                {isSpeakingSource && (
-                  <AudioWaveIndicator color="bg-blue-500" label="Speaking..." />
-                )}
-              </div>
-
-              {/* Language Selector in the TOP-RIGHT corner of the box */}
-              <div className="flex items-center gap-2">
-                <LanguageDropdown
-                  selectedLanguage={sourceLang}
-                  onChange={(newLang) => {
-                    if (newLang === targetLang) {
-                      // auto swap if user selects same language
-                      handleSwapLanguages();
-                    } else {
-                      setSourceLang(newLang);
-                    }
-                  }}
-                  otherSelectedLanguage={targetLang}
-                />
-              </div>
-            </div>
-
-            {/* Large Text Input Area */}
-            <div className="my-3 flex-1 flex flex-col">
-              <textarea
-                value={inputText}
-                onChange={(e) => {
-                  if (e.target.value.length <= MAX_CHARS) {
-                    setInputText(e.target.value);
-                  }
+        {activeTab === 'game' ? (
+          /* ================= LANGUAGE LEARNING GAME ================= */
+          <WordGame onBackToTranslator={() => setActiveTab('translator')} />
+        ) : (
+          /* ================= MAIN TRANSLATOR INTERFACE ================= */
+          <>
+            {/* Quick Example Presets */}
+            <div className="animate-entrance-up delay-100">
+              <PresetChips
+                onSelect={(preset) => {
+                  ttsService.stop();
+                  setSpeakingWhich(null);
+                  setSourceLang(preset.sourceLang);
+                  setTargetLang(preset.targetLang);
+                  setInputText(preset.sourceText);
+                  executeTranslation(preset.sourceText, preset.sourceLang, preset.targetLang, false);
                 }}
-                placeholder="Type or speak your text here..."
-                rows={4}
-                className="w-full h-full min-h-[100px] resize-none bg-transparent text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 text-lg sm:text-xl font-normal leading-relaxed focus:outline-none"
               />
             </div>
 
-            {/* Listening Live Status */}
-            {isListening && (
-              <div className="mb-2 py-1.5 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between">
+            {/* Alerts & Notifications */}
+            {infoMessage && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm flex items-center justify-between shadow-xs animate-entrance-down">
                 <div className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-                  </span>
-                  <span>Listening in <strong>{sourceLang}</strong>... Speak into your microphone</span>
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>{infoMessage}</span>
                 </div>
                 <button
-                  type="button"
-                  onClick={handleToggleVoiceInput}
-                  className="font-semibold text-rose-800 dark:text-rose-200 hover:underline cursor-pointer"
+                  onClick={() => setInfoMessage(null)}
+                  className="text-amber-600 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-100 p-1 cursor-pointer"
                 >
-                  Done
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             )}
 
-            {/* Bottom Actions of Top Box: Microphone, Clear & Character Count */}
-            <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
-              <div className="flex items-center gap-2">
-                {/* Microphone Button 🎤 */}
-                <button
-                  type="button"
-                  onClick={handleToggleVoiceInput}
-                  title={isListening ? 'Stop listening' : 'Start voice input (Speak)'}
-                  aria-label={isListening ? 'Stop listening' : 'Start voice input'}
-                  className={`relative p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    isListening
-                      ? 'bg-rose-500 text-white border-rose-600 shadow-md shadow-rose-500/30 ring-2 ring-rose-400 animate-pulse'
-                      : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700'
-                  }`}
-                >
-                  {isListening ? (
-                    <MicOff className="w-5 h-5" />
-                  ) : (
-                    <Mic className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  )}
-                </button>
-
-                {/* Speaker Button 🔊 for Source Text */}
-                <button
-                  type="button"
-                  onClick={handleToggleSpeechSource}
-                  disabled={!inputText.trim()}
-                  title={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
-                  aria-label={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
-                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    isSpeakingSource
-                      ? 'bg-blue-600 text-white border-blue-700 shadow-md ring-2 ring-blue-400 animate-pulse'
-                      : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
-                  }`}
-                >
-                  <Volume2 className={`w-5 h-5 ${isSpeakingSource ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`} />
-                </button>
-
-                {/* Clear Button */}
-                {inputText && (
-                  <button
-                    type="button"
-                    onClick={handleClear}
-                    title="Clear input"
-                    aria-label="Clear input"
-                    className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Character Counter */}
-              <div className="text-xs font-mono text-zinc-400 dark:text-zinc-500">
-                {inputText.length} / {MAX_CHARS}
-              </div>
-            </div>
-          </div>
-
-          {/* ================= CONTROLS BETWEEN BOXES ================= */}
-          <div className="flex items-center justify-center gap-3 py-1 px-4">
-            {/* Swap Languages Button ⇅ */}
-            <button
-              type="button"
-              onClick={handleSwapLanguages}
-              title="Swap languages"
-              aria-label="Swap languages"
-              className="group p-3 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <ArrowUpDown className="w-5 h-5 text-zinc-600 dark:text-zinc-400 group-hover:rotate-180 transition-transform duration-300" />
-            </button>
-
-            {/* Prominent Translate Button */}
-            <button
-              type="button"
-              onClick={handleTranslateClick}
-              disabled={isLoading}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-sm sm:text-base shadow-md shadow-blue-500/25 hover:shadow-lg hover:shadow-blue-500/30 transition-all disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-950 active:scale-98"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Translating...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>Translate</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* ================= BOTTOM BOX (OUTPUT) ================= */}
-          <div className="relative w-full rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all p-5 flex flex-col justify-between min-h-[220px]">
-            {/* Box Header: Top-right corner Language Selector */}
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800/80">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                <span>Translation Result</span>
-                {isSpeakingTarget && (
-                  <AudioWaveIndicator color="bg-emerald-500" label="Speaking..." />
-                )}
-              </div>
-
-              {/* Language Selector in the TOP-RIGHT corner of the bottom box */}
-              <div className="flex items-center gap-2">
-                <LanguageDropdown
-                  selectedLanguage={targetLang}
-                  onChange={(newLang) => {
-                    if (newLang === sourceLang) {
-                      handleSwapLanguages();
-                    } else {
-                      setTargetLang(newLang);
-                    }
-                  }}
-                  otherSelectedLanguage={sourceLang}
-                />
-              </div>
-            </div>
-
-            {/* Large Output Area */}
-            <div className="my-3 flex-1 flex flex-col justify-center">
-              {isLoading && !translatedText ? (
-                <div className="flex items-center gap-3 py-6 text-zinc-400 dark:text-zinc-500">
-                  <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
-                  <span className="text-base italic">Generating natural translation...</span>
+            {errorMessage && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-sm flex items-center justify-between shadow-xs animate-entrance-down">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                  <span>{errorMessage}</span>
                 </div>
-              ) : translatedText ? (
-                <p className="text-zinc-900 dark:text-zinc-50 text-lg sm:text-xl font-medium leading-relaxed select-text whitespace-pre-wrap">
-                  {translatedText}
-                </p>
-              ) : (
-                <p className="text-zinc-400 dark:text-zinc-500 text-lg sm:text-xl italic font-normal">
-                  Translation will appear here automatically...
-                </p>
-              )}
-            </div>
-
-            {/* Bottom Actions of Bottom Box: Speaker 🔊, Stop ⏹, and Copy Button */}
-            <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
-              <div className="flex items-center gap-2">
-                {/* Speaker Button 🔊 */}
                 <button
-                  type="button"
-                  onClick={handleToggleSpeechTarget}
-                  disabled={!translatedText}
-                  title={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
-                  aria-label={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
-                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    isSpeakingTarget
-                      ? 'bg-emerald-600 text-white border-emerald-700 shadow-md ring-2 ring-emerald-400 animate-pulse'
-                      : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
-                  }`}
+                  onClick={() => setErrorMessage(null)}
+                  className="text-rose-600 dark:text-rose-400 hover:text-rose-900 dark:hover:text-rose-100 p-1 cursor-pointer"
                 >
-                  <Volume2 className={`w-5 h-5 ${isSpeakingTarget ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'}`} />
+                  <X className="w-4 h-4" />
                 </button>
+              </div>
+            )}
 
-                {/* Stop Speech Button ⏹ */}
-                {isSpeakingTarget && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      ttsService.stop();
-                      setSpeakingWhich(null);
+            {/* MAIN INTERFACE: TWO LARGE RECTANGULAR TRANSLATION BOXES ARRANGED VERTICALLY */}
+            <div className="flex flex-col gap-3">
+              {/* ================= TOP BOX (INPUT) ================= */}
+              <div className="animate-entrance-up delay-150 relative w-full rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all p-5 flex flex-col justify-between min-h-[220px]">
+                {/* Box Header: Top-right corner Language Selector */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800/80">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    <span>Source Text</span>
+                    {isListening && (
+                      <AudioWaveIndicator color="bg-rose-500" label="Listening..." />
+                    )}
+                    {isSpeakingSource && (
+                      <AudioWaveIndicator color="bg-blue-500" label="Speaking..." />
+                    )}
+                  </div>
+
+                  {/* Language Selector in the TOP-RIGHT corner of the box */}
+                  <div className="flex items-center gap-2">
+                    <LanguageDropdown
+                      selectedLanguage={sourceLang}
+                      onChange={(newLang) => {
+                        if (newLang === targetLang) {
+                          // auto swap if user selects same language
+                          handleSwapLanguages();
+                        } else {
+                          setSourceLang(newLang);
+                        }
+                      }}
+                      otherSelectedLanguage={targetLang}
+                    />
+                  </div>
+                </div>
+
+                {/* Large Text Input Area */}
+                <div className="my-3 flex-1 flex flex-col">
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => {
+                      if (e.target.value.length <= MAX_CHARS) {
+                        setInputText(e.target.value);
+                      }
                     }}
-                    title="Stop playback"
-                    aria-label="Stop playback"
-                    className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 hover:bg-rose-100 transition-colors cursor-pointer"
-                  >
-                    <Square className="w-5 h-5 fill-current" />
-                  </button>
+                    placeholder="Type or speak your text here..."
+                    rows={4}
+                    className="w-full h-full min-h-[100px] resize-none bg-transparent text-zinc-900 dark:text-zinc-50 placeholder-zinc-400 text-lg sm:text-xl font-normal leading-relaxed focus:outline-none"
+                  />
+                </div>
+
+                {/* Listening Live Status */}
+                {isListening && (
+                  <div className="mb-2 py-1.5 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                      </span>
+                      <span>Listening in <strong>{sourceLang}</strong>... Speak into your microphone</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleVoiceInput}
+                      className="font-semibold text-rose-800 dark:text-rose-200 hover:underline cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
                 )}
 
-                {/* Copy Button */}
+                {/* Bottom Actions of Top Box: Microphone, Speaker, Clear & Character Count */}
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
+                  <div className="flex items-center gap-2">
+                    {/* Microphone Button 🎤 */}
+                    <button
+                      type="button"
+                      onClick={handleToggleVoiceInput}
+                      title={isListening ? 'Stop listening' : 'Start voice input (Speak)'}
+                      aria-label={isListening ? 'Stop listening' : 'Start voice input'}
+                      className={`relative p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isListening
+                          ? 'bg-rose-500 text-white border-rose-600 shadow-md shadow-rose-500/30 ring-2 ring-rose-400 animate-pulse'
+                          : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      {isListening ? (
+                        <MicOff className="w-5 h-5" />
+                      ) : (
+                        <Mic className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                      )}
+                    </button>
+
+                    {/* Speaker Button 🔊 for Source Text */}
+                    <button
+                      type="button"
+                      onClick={handleToggleSpeechSource}
+                      disabled={!inputText.trim()}
+                      title={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
+                      aria-label={isSpeakingSource ? 'Stop speech' : `Listen in ${sourceLang}`}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isSpeakingSource
+                          ? 'bg-blue-600 text-white border-blue-700 shadow-md ring-2 ring-blue-400 animate-pulse'
+                          : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                      }`}
+                    >
+                      <Volume2 className={`w-5 h-5 ${isSpeakingSource ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`} />
+                    </button>
+
+                    {/* Clear Button */}
+                    {inputText && (
+                      <button
+                        type="button"
+                        onClick={handleClear}
+                        title="Clear input"
+                        aria-label="Clear input"
+                        className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors cursor-pointer"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Character Counter */}
+                  <div className="text-xs font-mono text-zinc-400 dark:text-zinc-500">
+                    {inputText.length} / {MAX_CHARS}
+                  </div>
+                </div>
+              </div>
+
+              {/* ================= CONTROLS BETWEEN BOXES ================= */}
+              <div className="animate-entrance-scale delay-200 flex items-center justify-center gap-3 py-1 px-4">
+                {/* Swap Languages Button ⇅ */}
                 <button
                   type="button"
-                  onClick={handleCopy}
-                  disabled={!translatedText}
-                  title="Copy translation"
-                  aria-label="Copy translation"
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={handleSwapLanguages}
+                  title="Swap languages"
+                  aria-label="Swap languages"
+                  className="group p-3 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                 >
-                  {copied ? (
+                  <ArrowUpDown className="w-5 h-5 text-zinc-600 dark:text-zinc-400 group-hover:rotate-180 transition-transform duration-300" />
+                </button>
+
+                {/* Prominent Translate Button */}
+                <button
+                  type="button"
+                  onClick={handleTranslateClick}
+                  disabled={isLoading}
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-sm sm:text-base shadow-md shadow-blue-500/25 hover:shadow-lg hover:shadow-blue-500/30 transition-all disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-950 active:scale-98 cursor-pointer"
+                >
+                  {isLoading ? (
                     <>
-                      <Check className="w-4 h-4 text-emerald-500" />
-                      <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Translating...</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-4 h-4 text-zinc-500" />
-                      <span>Copy</span>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Translate</span>
                     </>
                   )}
                 </button>
               </div>
 
-              {/* Status Badge */}
-              <div className="text-xs text-zinc-400 dark:text-zinc-500 font-medium">
-                {translatedText ? `${targetLang} output` : ''}
+              {/* ================= BOTTOM BOX (OUTPUT) ================= */}
+              <div className="animate-entrance-up delay-250 relative w-full rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 transition-all p-5 flex flex-col justify-between min-h-[220px]">
+                {/* Box Header: Top-right corner Language Selector */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-100 dark:border-zinc-800/80">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    <span>Translation Result</span>
+                    {isSpeakingTarget && (
+                      <AudioWaveIndicator color="bg-emerald-500" label="Speaking..." />
+                    )}
+                  </div>
+
+                  {/* Language Selector in the TOP-RIGHT corner of the bottom box */}
+                  <div className="flex items-center gap-2">
+                    <LanguageDropdown
+                      selectedLanguage={targetLang}
+                      onChange={(newLang) => {
+                        if (newLang === sourceLang) {
+                          handleSwapLanguages();
+                        } else {
+                          setTargetLang(newLang);
+                        }
+                      }}
+                      otherSelectedLanguage={sourceLang}
+                    />
+                  </div>
+                </div>
+
+                {/* Large Output Area */}
+                <div className="my-3 flex-1 flex flex-col justify-center">
+                  {isLoading && !translatedText ? (
+                    <div className="flex items-center gap-3 py-6 text-zinc-400 dark:text-zinc-500">
+                      <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                      <span className="text-base italic">Generating natural translation...</span>
+                    </div>
+                  ) : translatedText ? (
+                    <p className="text-zinc-900 dark:text-zinc-50 text-lg sm:text-xl font-medium leading-relaxed select-text whitespace-pre-wrap">
+                      {translatedText}
+                    </p>
+                  ) : (
+                    <p className="text-zinc-400 dark:text-zinc-500 text-lg sm:text-xl italic font-normal">
+                      Translation will appear here automatically...
+                    </p>
+                  )}
+                </div>
+
+                {/* Bottom Actions of Bottom Box: Speaker 🔊, Stop ⏹, and Copy Button */}
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
+                  <div className="flex items-center gap-2">
+                    {/* Speaker Button 🔊 */}
+                    <button
+                      type="button"
+                      onClick={handleToggleSpeechTarget}
+                      disabled={!translatedText}
+                      title={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
+                      aria-label={isSpeakingTarget ? 'Stop speaking' : `Read aloud in ${targetLang}`}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isSpeakingTarget
+                          ? 'bg-emerald-600 text-white border-emerald-700 shadow-md ring-2 ring-emerald-400 animate-pulse'
+                          : 'bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                      }`}
+                    >
+                      <Volume2 className={`w-5 h-5 ${isSpeakingTarget ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'}`} />
+                    </button>
+
+                    {/* Stop Speech Button ⏹ */}
+                    {isSpeakingTarget && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          ttsService.stop();
+                          setSpeakingWhich(null);
+                        }}
+                        title="Stop playback"
+                        aria-label="Stop playback"
+                        className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 hover:bg-rose-100 transition-colors cursor-pointer"
+                      >
+                        <Square className="w-5 h-5 fill-current" />
+                      </button>
+                    )}
+
+                    {/* Copy Button */}
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      disabled={!translatedText}
+                      title="Copy translation"
+                      aria-label="Copy translation"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-4 h-4 text-emerald-500" />
+                          <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4 text-zinc-500" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div className="text-xs text-zinc-400 dark:text-zinc-500 font-medium">
+                    {translatedText ? `${targetLang} output` : ''}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Translation History Section */}
-        <HistorySection
-          history={history}
-          onRestore={handleRestoreHistory}
-          onClear={handleClearHistory}
-          onDeleteSingle={handleDeleteHistoryItem}
-        />
+            {/* Translation History Section */}
+            <div className="animate-entrance-up delay-300">
+              <HistorySection
+                history={history}
+                onRestore={handleRestoreHistory}
+                onClear={handleClearHistory}
+                onDeleteSingle={handleDeleteHistoryItem}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Footer */}
-      <footer className="mt-12 text-center text-xs text-zinc-400 dark:text-zinc-600 py-4 border-t border-zinc-200/60 dark:border-zinc-800/60">
-        AI Translator • English, Russian, Uzbek • Ready for GitHub & Vercel deployment
+      <footer className="animate-entrance-up delay-350 mt-12 text-center text-xs text-zinc-400 dark:text-zinc-600 py-4 border-t border-zinc-200/60 dark:border-zinc-800/60 flex flex-col sm:flex-row items-center justify-between gap-2 max-w-4xl mx-auto w-full">
+        <div>
+          <strong>Ilmhub Translate</strong> • O‘zbek, Rus va Ingliz tillari
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('game');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+          >
+            🎮 So‘zlar O‘yini
+          </button>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={() => setShowEntrance(true)}
+            className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+          >
+            Kirish oynasi
+          </button>
+        </div>
       </footer>
     </div>
   );
